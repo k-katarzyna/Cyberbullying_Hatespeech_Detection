@@ -3,13 +3,19 @@ import random
 import zipfile
 
 import numpy as np
+import pandas as pd
 import matplotlib.pyplot as plt
-from sklearn.metrics import f1_score
+from sklearn.model_selection import RandomizedSearchCV, StratifiedKFold
+from sklearn.metrics import f1_score, balanced_accuracy_score
+
+SEED = 42
+CV_SCHEME = StratifiedKFold(n_splits=5, shuffle=True, random_state=SEED)
 
 __all__ = ["load_data_and_labels_from_zip",
            "display_samples",
            "display_class_distribution",
-           "model_results"]
+           "model_results",
+           "optimize_models"]
 
 
 def load_data_and_labels_from_zip(zip_file_path, data_txt_file, labels_txt_file):
@@ -107,11 +113,97 @@ def model_results(pipeline, train_data, train_labels, test_data, test_labels):
     pipeline.fit(train_data, train_labels)
     y_pred = pipeline.predict(test_data)
     
-    f1_micro = f1_score(test_labels, y_pred, average="micro")
     f1_macro = f1_score(test_labels, y_pred, average="macro")
+    f1_micro = f1_score(test_labels, y_pred, average="micro")
 
     return {
         "model": pipeline.steps[1][1].__class__.__name__,
-        "microF": f1_micro,
-        "macroF": f1_macro
+        "macroF": f1_macro,
+        "microF": f1_micro
     }
+
+
+def get_metrics(best_idx, best_score, cv_results, name, y_pred, test_labels):
+    """
+    Calculate evaluation metrics for a model.
+
+    Args:
+        best_idx (int): Index of the best performing model in cv_results.
+        best_score (float): Best score achieved during cross-validation.
+        cv_results (dict): Dictionary containing results of cross-validation.
+        name (str): Name of the model.
+        y_pred (array-like): Predicted labels on the test data.
+        test_labels (array-like): True labels of the test data.
+
+    Returns:
+        dict: Dictionary containing evaluation metrics.
+    """
+    cv_f1_micro = cv_results["mean_test_f1_micro"][best_idx]
+    cv_balanced_accuracy = cv_results["mean_test_balanced_accuracy"][best_idx]
+    
+    test_f1_macro = f1_score(test_labels, y_pred, average="macro")
+    test_f1_micro = f1_score(test_labels, y_pred, average="micro")
+    test_balanced_accuracy = balanced_accuracy_score(test_labels, y_pred)
+
+    dict_result = {
+        "model": name,
+        "cv_macroF": best_score,
+        "cv_microF": cv_f1_micro,
+        "cv_balanced_acc": cv_balanced_accuracy,
+        "test_macroF": test_f1_macro,
+        "test_microF": test_f1_micro,
+        "test_balanced_acc": test_balanced_accuracy
+    }
+
+    return dict_result
+
+
+def optimize_models(names, model_grids, preprocess_grid, pipeline,
+                    train_data, train_labels, test_data, test_labels,
+                    n_iter=200, refit="f1_macro"):
+    """
+    Optimize multiple models using RandomizedSearchCV and evaluate them on test data.
+
+    Args:
+        names (list): List of model names.
+        model_grids (list): List of dictionaries containing hyperparameter grids for each model.
+        preprocess_grid (dict): Hyperparameter grid for preprocessing steps.
+        pipeline (object): Pipeline object for model training.
+        train_data (array-like): Training data.
+        train_labels (array-like): True labels of the training data.
+        test_data (array-like): Test data.
+        test_labels (array-like): True labels of the test data.
+        n_iter (int, optional): Number of parameter settings that are sampled. Defaults to 200.
+        refit (str, optional): Metric used to choose the best model. Defaults to "f1_macro".
+
+    Returns:
+        DataFrame: DataFrame containing evaluation metrics for each model.
+    """
+    results = []
+
+    for name, model_grid in zip(names, model_grids):
+        
+        param_grid = {**preprocess_grid,
+                      **model_grid}
+        
+        optimizer = RandomizedSearchCV(pipeline,
+                                       param_grid,
+                                       cv=CV_SCHEME,
+                                       scoring=["f1_macro", "f1_micro",
+                                                "balanced_accuracy"],
+                                       refit=refit,
+                                       n_jobs=-1,
+                                       n_iter=n_iter
+                                      )
+        optimizer.fit(train_data, train_labels)
+        y_pred = optimizer.best_estimator_.predict(test_data)
+        
+        scores = get_metrics(optimizer.best_index_,
+                             optimizer.best_score_,
+                             optimizer.cv_results_,
+                             name,
+                             y_pred,
+                             test_labels)
+        results.append(scores)
+        
+    return pd.DataFrame(results).round(3)
