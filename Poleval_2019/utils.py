@@ -10,7 +10,7 @@ import pandas as pd
 import matplotlib.pyplot as plt
 from sklearn.base import TransformerMixin
 from sklearn.model_selection import RandomizedSearchCV, StratifiedKFold
-from sklearn.metrics import f1_score, balanced_accuracy_score
+from sklearn.metrics import f1_score, balanced_accuracy_score, ConfusionMatrixDisplay
 
 SEED = 42
 CV_SCHEME = StratifiedKFold(n_splits=5, shuffle=True, random_state=SEED)
@@ -21,7 +21,8 @@ __all__ = ["SEED",
            "display_class_distribution",
            "model_results",
            "LemmaTransformer",
-           "optimize_models"]
+           "optimize_models",
+           "display_confusion_matrix"]
 
 
 def load_data_and_labels_from_zip(zip_file_path, data_txt_file, labels_txt_file):
@@ -229,7 +230,7 @@ def get_metrics(best_idx, best_score, cv_results, name, test, y_pred, test_label
 
 
 def save_params(params, test, name):
-    """Save best estimator's params as pkl file"""
+    """Save best estimator's params as pkl file."""
     save_params_path = os.path.join("results", "params_artifacts", test, f"{name}.pkl")
     with open(save_params_path, "wb") as f:
         pickle.dump(params, f)
@@ -291,3 +292,13 @@ def optimize_models(names, model_grids, preprocess_grid, pipeline,
         results.append(scores)
         
     return pd.DataFrame(results)
+
+
+def display_confusion_matrix(estimator, X_test, y_test, cmap="summer"):
+    """Display minimalistic confusion matrix from fitted estimator"""
+    fig, ax = plt.subplots(figsize=(3, 3))
+    ConfusionMatrixDisplay.from_estimator(estimator,
+                                          X_test, y_test,
+                                          ax=ax,
+                                          cmap=cmap,
+                                          colorbar=False);
